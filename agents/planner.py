@@ -1,9 +1,8 @@
 """Planner agent.
 
 Reads the structured TravelRequest and decides which specialized agents are
-actually needed for this trip — it does not invent travel data itself, and
-it avoids invoking agents that aren't relevant (e.g. skip Transport if
-origin/destination transit isn't in scope).
+actually needed for this trip. It routes only to agents relevant to the
+request and considers human feedback when regenerating an itinerary.
 """
 
 from __future__ import annotations
@@ -26,21 +25,52 @@ class AgentSelection(BaseModel):
 
 
 def _rule_based_fallback(travel_request: TravelRequest) -> list[str]:
-    """Deterministic backup used if the LLM call fails, so planning never blocks the graph."""
-    interests = [i.lower() for i in travel_request.preferences.interests]
+    """Deterministic backup used if the LLM call fails."""
+    interests = [
+        interest.lower()
+        for interest in travel_request.preferences.interests
+    ]
+
     agents: set[str] = set()
 
-    if any(k in interests for k in ("food", "cuisine", "restaurants", "dining")):
+    if any(
+        keyword in interests
+        for keyword in (
+            "food",
+            "cuisine",
+            "restaurant",
+            "restaurants",
+            "dining",
+        )
+    ):
         agents.add("restaurant")
-    if any(k in interests for k in ("history", "historical", "culture", "museum", "sightseeing")):
+
+    if any(
+        keyword in interests
+        for keyword in (
+            "history",
+            "historical",
+            "culture",
+            "cultural",
+            "museum",
+            "sightseeing",
+            "landmark",
+            "attraction",
+        )
+    ):
         agents.add("sightseeing")
 
     if not agents:
-        # Default to a reasonably complete trip when interests are unclear.
         agents.update({"sightseeing", "restaurant"})
 
-    agents.add("hotel")
+    # Accommodation is generally relevant for multi-day trips.
+    if (
+        travel_request.dates.duration_days is None
+        or travel_request.dates.duration_days > 1
+    ):
+        agents.add("hotel")
 
+    # Transport requires both endpoints.
     if travel_request.origin and travel_request.destination:
         agents.add("transport")
 
@@ -53,41 +83,79 @@ def run(state: TravelState) -> TravelState:
     if travel_request is None:
         return {
             "planned_agents": ["fallback"],
-            "planner_reasoning": "No structured travel request available; routing to fallback.",
+            "planner_reasoning": (
+                "No structured travel request available; "
+                "routing to fallback."
+            ),
         }
 
     try:
         llm = get_llm(temperature=0)
         structured_llm = llm.with_structured_output(AgentSelection)
+
+        human_feedback = state.get("human_feedback")
+
+        user_content = (
+            f"Travel request:\n"
+            f"{travel_request.model_dump_json()}\n\n"
+            f"Available agents: {sorted(VALID_AGENTS)}\n"
+            "Select only the agents genuinely needed for this trip."
+        )
+
+        if human_feedback:
+            user_content += (
+                f"\n\nHuman feedback from the previous itinerary review:\n"
+                f"{human_feedback}\n\n"
+                "Use this feedback to determine which agents need to be "
+                "rerun or added for the revised itinerary."
+            )
+
         selection: AgentSelection = structured_llm.invoke(
             [
                 {"role": "system", "content": _PROMPT},
                 {
                     "role": "user",
-                    "content": (
-                        f"Travel request:\n{travel_request.model_dump_json()}\n\n"
-                        f"Available agents: {sorted(VALID_AGENTS)}\n"
-                        "Select only the agents genuinely needed for this trip."
-                    ),
+                    "content": user_content,
                 },
             ]
         )
-        agents = [a for a in selection.agents if a in VALID_AGENTS]
+
+        agents = [
+            agent
+            for agent in selection.agents
+            if agent in VALID_AGENTS
+        ]
+
         reasoning = selection.reasoning
 
         if not agents:
             agents = _rule_based_fallback(travel_request)
-            reasoning = reasoning or "LLM returned no valid agents; used rule-based fallback."
+            reasoning = (
+                reasoning
+                or "LLM returned no valid agents; "
+                "used rule-based fallback."
+            )
+
+        return {
+            "planned_agents": agents,
+            "planner_reasoning": reasoning,
+        }
 
     except Exception as exc:
         errors = state.get("errors", []) + [
-            {"node": "planner", "message": str(exc), "retry_count": 0}
+            {
+                "node": "planner",
+                "message": str(exc),
+                "retry_count": 0,
+            }
         ]
+
         agents = _rule_based_fallback(travel_request)
+
         return {
             "planned_agents": agents,
-            "planner_reasoning": "LLM planning failed; used rule-based fallback.",
+            "planner_reasoning": (
+                "LLM planning failed; used rule-based fallback."
+            ),
             "errors": errors,
         }
-
-    return {"planned_agents": agents, "planner_reasoning": reasoning}

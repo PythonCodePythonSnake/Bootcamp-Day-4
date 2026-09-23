@@ -1,118 +1,145 @@
 """Sightseeing agent.
 
-Finds attractions, museums, activities, and (where available) events for the
-destination, then uses the LLM to rank/select the ones best matched to the
-user's interests. Never invents places — only reorders/trims real tool
-results.
+Reads the structured TravelRequest, resolves the destination to coordinates,
+searches for relevant attractions and points of interest, and organizes the
+results according to the user's interests, must-visit places, and preferences.
 """
 
 from __future__ import annotations
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from config import get_llm
 from graph.state import TravelState
-from schemas.itinerary import Coordinates, Place, SourceInfo
-from tools.places import search_places
+from schemas.travel import TravelRequest
 from utils.helpers import load_prompt
 
 _PROMPT = load_prompt("sightseeing")
 
-_CATEGORY = "tourist_attraction"
-_MAX_RESULTS = 8
+
+class SightseeingSelection(BaseModel):
+    places: list[dict] = Field(default_factory=list)
+    reasoning: str = ""
 
 
-class _Selection(BaseModel):
-    selected_names: list[str]
+def _fallback(travel_request: TravelRequest) -> list[dict]:
+    """Deterministic fallback when sightseeing search fails."""
+    return [
+        {
+            "name": "Sightseeing search required",
+            "location": travel_request.destination,
+            "reason": "No live sightseeing results were available from the places tool.",
+        }
+    ]
 
 
-def _to_place(raw: dict) -> Place:
-    lat = raw.get("lat")
-    lng = raw.get("lng")
-    coordinates = Coordinates(lat=lat, lng=lng) if lat is not None and lng is not None else None
+def run(state: TravelState) -> TravelState:
+    travel_request = state.get("travel_request")
 
-    return Place(
-        name=raw.get("name", "Unknown"),
-        category=raw.get("category"),
-        description=raw.get("description"),
-        address=raw.get("address"),
-        coordinates=coordinates,
-        opening_hours=raw.get("opening_hours"),
-        price=raw.get("price"),
-        currency=raw.get("currency", "INR"),
-        rating=raw.get("rating"),
-        tags=raw.get("tags", []) or [],
-        source_info=SourceInfo(
-            source=raw.get("source", "google_places"),
-            url=raw.get("url"),
-            is_verified=True,
-        ),
-    )
-
-
-def _rank_and_filter(places: list[Place], interests: list[str]) -> list[Place]:
-    """LLM reasons over the real tool results to pick/order the best matches.
-    Falls back to a naive rating sort if the LLM call fails."""
-    if not places:
-        return []
-
-    fallback_order = sorted(places, key=lambda p: (p.rating or 0), reverse=True)[:_MAX_RESULTS]
+    if travel_request is None:
+        return {
+            "agent_results": {
+                **(state.get("agent_results", {}) or {}),
+                "sightseeing": [],
+            },
+            "errors": [
+                {
+                    "node": "sightseeing",
+                    "message": "No structured travel request available.",
+                    "retry_count": 0,
+                }
+            ],
+        }
 
     try:
-        llm = get_llm(temperature=0)
-        structured_llm = llm.with_structured_output(_Selection)
-        candidates_text = "\n".join(
-            f"- {p.name}: {p.description or 'no description'} (tags: {', '.join(p.tags) or 'none'})"
-            for p in places
+        from tools.maps import geocode
+        from tools.places import get_attractions, get_museums, get_parks
+
+        # Resolve destination into coordinates.
+        location = geocode(travel_request.destination)
+
+        if not location:
+            raise ValueError(
+                f"Could not geocode destination: {travel_request.destination}"
+            )
+
+        latitude = location["lat"]
+        longitude = location["lon"]
+
+        # Search the main sightseeing categories.
+        attractions = get_attractions(
+            latitude=latitude,
+            longitude=longitude,
         )
-        selection: _Selection = structured_llm.invoke(
+
+        museums = get_museums(
+            latitude=latitude,
+            longitude=longitude,
+        )
+
+        parks = get_parks(
+            latitude=latitude,
+            longitude=longitude,
+        )
+
+        sightseeing_data = (
+            (attractions or [])
+            + (museums or [])
+            + (parks or [])
+        )
+
+        llm = get_llm(temperature=0)
+        structured_llm = llm.with_structured_output(SightseeingSelection)
+
+        selection: SightseeingSelection = structured_llm.invoke(
             [
                 {"role": "system", "content": _PROMPT},
                 {
                     "role": "user",
                     "content": (
-                        f"User interests: {', '.join(interests) or 'general sightseeing'}\n\n"
-                        f"Candidate places:\n{candidates_text}\n\n"
-                        f"Select up to {_MAX_RESULTS} names, best-matched first. "
-                        "Only use names exactly as given above."
+                        f"Travel request:\n"
+                        f"{travel_request.model_dump_json()}\n\n"
+                        f"Available sightseeing data:\n"
+                        f"{sightseeing_data}\n\n"
+                        "Select and organize the most relevant sightseeing "
+                        "places according to the user's interests, trip "
+                        "intent, must-visit places, and avoid preferences. "
+                        "Do not invent information that is not present in "
+                        "the provided sightseeing data."
                     ),
                 },
             ]
         )
-        by_name = {p.name: p for p in places}
-        selected = [by_name[name] for name in selection.selected_names if name in by_name]
-        return selected[:_MAX_RESULTS] if selected else fallback_order
-    except Exception:
-        return fallback_order
 
+        places = selection.places
 
-def run(state: TravelState) -> TravelState:
-    travel_request = state.get("travel_request")
-    agent_results = state.get("agent_results", {}) or {}
+        if not places:
+            places = (
+                sightseeing_data
+                if sightseeing_data
+                else _fallback(travel_request)
+            )
 
-    if travel_request is None or not travel_request.destination:
-        errors = state.get("errors", []) + [
-            {"node": "sightseeing", "message": "Missing destination in travel request.", "retry_count": 0}
-        ]
-        return {"errors": errors}
+        return {
+            "agent_results": {
+                **(state.get("agent_results", {}) or {}),
+                "sightseeing": places,
+            }
+        }
 
-    interests = travel_request.preferences.interests
-
-    try:
-        raw_places = search_places(
-            destination=travel_request.destination,
-            category=_CATEGORY,
-            keywords=interests,
-            max_results=15,
-        )
     except Exception as exc:
         errors = state.get("errors", []) + [
-            {"node": "sightseeing", "message": str(exc), "retry_count": 0}
+            {
+                "node": "sightseeing",
+                "message": str(exc),
+                "retry_count": 0,
+            }
         ]
-        return {"errors": errors}
 
-    places = [_to_place(raw) for raw in raw_places]
-    selected = _rank_and_filter(places, interests)
-
-    agent_results["sightseeing"] = [p.model_dump() for p in selected]
-    return {"agent_results": agent_results}
+        return {
+            "agent_results": {
+                **(state.get("agent_results", {}) or {}),
+                "sightseeing": _fallback(travel_request),
+            },
+            "errors": errors,
+        }

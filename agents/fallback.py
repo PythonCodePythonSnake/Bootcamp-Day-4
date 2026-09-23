@@ -1,8 +1,8 @@
 """Fallback agent.
 
 Handles travel-related requests that do not clearly belong to one of the
-specialized agents. It uses web search/research tools and returns structured
-findings for the itinerary workflow.
+specialized agents. It uses the web search tool for general travel research,
+events, festivals, advisories, customs, visa information, and niche requests.
 """
 
 from __future__ import annotations
@@ -37,7 +37,10 @@ def run(state: TravelState) -> TravelState:
 
     if travel_request is None:
         return {
-            "fallback_results": _fallback(),
+            "agent_results": {
+                **(state.get("agent_results", {}) or {}),
+                "fallback": _fallback(),
+            },
             "errors": [
                 {
                     "node": "fallback",
@@ -48,22 +51,21 @@ def run(state: TravelState) -> TravelState:
         }
 
     try:
-        llm = get_llm(temperature=0)
-        structured_llm = llm.with_structured_output(FallbackResult)
-
-        # Assumed tool interface:
-        # web_search(query) -> list[dict]
-        #
-        # The actual tool implementation is owned by the tools/ team.
-        from tools.web_search import web_search
+        from tools.web_search import search
 
         query = (
             f"Travel information for {travel_request.destination}. "
             f"Interests: {travel_request.preferences.interests}. "
-            f"Must visit: {travel_request.must_visit}."
+            f"Must visit: {travel_request.preferences.must_visit}. "
+            f"Avoid: {travel_request.preferences.avoid}."
         )
 
-        search_data = web_search(query)
+        # Assumed tool interface based on tools/web_search.py:
+        # search(query) -> list[dict]
+        search_data = search(query)
+
+        llm = get_llm(temperature=0)
+        structured_llm = llm.with_structured_output(FallbackResult)
 
         result: FallbackResult = structured_llm.invoke(
             [
@@ -73,9 +75,11 @@ def run(state: TravelState) -> TravelState:
                     "content": (
                         f"Travel request:\n"
                         f"{travel_request.model_dump_json()}\n\n"
-                        f"Web research results:\n{search_data}\n\n"
+                        f"Web research results:\n"
+                        f"{search_data}\n\n"
                         "Extract only useful travel information from the "
-                        "provided research. Do not invent facts."
+                        "provided research. Do not invent facts. Preserve "
+                        "source information where available."
                     ),
                 },
             ]
@@ -87,8 +91,10 @@ def run(state: TravelState) -> TravelState:
             results = search_data if search_data else _fallback()
 
         return {
-            "fallback_results": results,
-            "fallback_reasoning": result.reasoning,
+            "agent_results": {
+                **(state.get("agent_results", {}) or {}),
+                "fallback": results,
+            }
         }
 
     except Exception as exc:
@@ -101,7 +107,9 @@ def run(state: TravelState) -> TravelState:
         ]
 
         return {
-            "fallback_results": _fallback(),
-            "fallback_reasoning": "Fallback research failed.",
+            "agent_results": {
+                **(state.get("agent_results", {}) or {}),
+                "fallback": _fallback(),
+            },
             "errors": errors,
         }

@@ -14,7 +14,8 @@ load_dotenv()
 @dataclass
 class Settings:
     gemini_api_key: str = field(default_factory=lambda: os.getenv("GEMINI_API_KEY", ""))
-    gemini_model: str = field(default_factory=lambda: os.getenv("GEMINI_MODEL", "gemini-2.0-flash"))
+    gemini_model: str = field(default_factory=lambda: os.getenv("GEMINI_MODEL", "gemma-4-31b-it"))
+    # "gemma-4-26b-a4b-it", gemini-2.5-flash-lite
 
     langsmith_api_key: str = field(default_factory=lambda: os.getenv("LANGSMITH_API_KEY", ""))
     langsmith_tracing: bool = field(
@@ -37,6 +38,18 @@ class Settings:
             warnings.append("GEMINI_API_KEY is not set — LLM calls will fail.")
         return warnings
 
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+LANGSMITH_API_KEY = os.getenv("LANGSMITH_API_KEY")
+TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
+TICKETMASTER_API_KEY = os.getenv("TICKETMASTER_API_KEY")
+
+NOMINATIM_URL = "https://nominatim.openstreetmap.org"
+OVERPASS_URL = "https://overpass-api.de/api/interpreter"
+OSRM_URL = "https://router.project-osrm.org"
+OPEN_METEO_URL = "https://api.open-meteo.com/v1"
+EXCHANGE_URL = "https://api.exchangerate.host"
+
+HEADERS = {"User-Agent": "travel-agent/1.0"}
 
 settings = Settings()
 

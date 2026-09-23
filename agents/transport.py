@@ -1,8 +1,7 @@
 """Transport agent.
 
-Reads the structured TravelRequest and finds relevant transportation
-options between the origin and destination, while also considering
-transport preferences.
+Reads the structured TravelRequest and finds relevant flight options between
+the origin and destination while considering the user's transport preference.
 """
 
 from __future__ import annotations
@@ -31,7 +30,10 @@ def _fallback(travel_request: TravelRequest) -> list[dict]:
         return [
             {
                 "status": "insufficient_information",
-                "reason": "Origin and destination are required for transport planning.",
+                "reason": (
+                    "Origin and destination are required for transport "
+                    "planning."
+                ),
             }
         ]
 
@@ -50,7 +52,10 @@ def run(state: TravelState) -> TravelState:
 
     if travel_request is None:
         return {
-            "transport_results": [],
+            "agent_results": {
+                **(state.get("agent_results", {}) or {}),
+                "transport": [],
+            },
             "errors": [
                 {
                     "node": "transport",
@@ -62,24 +67,34 @@ def run(state: TravelState) -> TravelState:
 
     if not travel_request.origin or not travel_request.destination:
         return {
-            "transport_results": _fallback(travel_request),
-            "transport_reasoning": (
-                "Transport planning skipped because origin or destination "
-                "is missing."
-            ),
+            "agent_results": {
+                **(state.get("agent_results", {}) or {}),
+                "transport": _fallback(travel_request),
+            }
         }
 
     try:
+        from tools.flights import search_flights
+
+        # Assumed tool interface based on tools/flights.py:
+        # search_flights(origin, destination, travel_date) -> list[dict]
+        #
+        # Exact airport-code resolution can be added to the tool layer later.
+        start_date = travel_request.dates.start_date
+
+        if start_date is None:
+            raise ValueError(
+                "A travel start date is required for flight search."
+            )
+
+        flight_data = search_flights(
+            origin=travel_request.origin,
+            destination=travel_request.destination,
+            travel_date=start_date,
+        )
+
         llm = get_llm(temperature=0)
         structured_llm = llm.with_structured_output(TransportSelection)
-
-        # Assumed tool interface:
-        # search_transport(travel_request) -> list[dict]
-        #
-        # The actual tool implementation is owned by the tools/ team.
-        from tools.flights import search_transport
-
-        transport_data = search_transport(travel_request)
 
         selection: TransportSelection = structured_llm.invoke(
             [
@@ -87,11 +102,14 @@ def run(state: TravelState) -> TravelState:
                 {
                     "role": "user",
                     "content": (
-                        f"Travel request:\n{travel_request.model_dump_json()}\n\n"
-                        f"Available transport data:\n{transport_data}\n\n"
+                        f"Travel request:\n"
+                        f"{travel_request.model_dump_json()}\n\n"
+                        f"Available flight data:\n"
+                        f"{flight_data}\n\n"
                         "Select and organize the most relevant transport "
-                        "options. Do not invent information that is not "
-                        "present in the provided transport data."
+                        "options. Respect the user's transport preference "
+                        "when possible. Do not invent information that is "
+                        "not present in the provided flight data."
                     ),
                 },
             ]
@@ -101,14 +119,16 @@ def run(state: TravelState) -> TravelState:
 
         if not options:
             options = (
-                transport_data
-                if transport_data
+                flight_data
+                if flight_data
                 else _fallback(travel_request)
             )
 
         return {
-            "transport_results": options,
-            "transport_reasoning": selection.reasoning,
+            "agent_results": {
+                **(state.get("agent_results", {}) or {}),
+                "transport": options,
+            }
         }
 
     except Exception as exc:
@@ -121,9 +141,9 @@ def run(state: TravelState) -> TravelState:
         ]
 
         return {
-            "transport_results": _fallback(travel_request),
-            "transport_reasoning": (
-                "Transport search failed; used fallback result."
-            ),
+            "agent_results": {
+                **(state.get("agent_results", {}) or {}),
+                "transport": _fallback(travel_request),
+            },
             "errors": errors,
         }
