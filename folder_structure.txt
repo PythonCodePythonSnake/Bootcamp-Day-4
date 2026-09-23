@@ -1,0 +1,53 @@
+travel_agent/
+│
+├── main.py
+├── config.py
+├── requirements.txt
+├── .env
+├── README.md
+│
+├── agents/
+│   ├── __init__.py
+│   ├── orchestrator.py
+│   ├── planner.py
+│   ├── sightseeing.py
+│   ├── restaurant.py
+│   ├── hotel.py
+│   ├── transport.py
+│   ├── fallback.py
+│   └── synthesizer.py
+│
+├── graph/
+│   ├── __init__.py
+│   ├── state.py
+│   └── workflow.py
+│
+├── tools/
+│   ├── __init__.py
+│   ├── maps.py
+│   ├── places.py
+│   ├── routes.py
+│   ├── flights.py
+│   ├── hotels.py
+│   ├── weather.py
+│   ├── currency.py
+│   └── web_search.py
+│
+├── schemas/
+│   ├── __init__.py
+│   ├── travel.py
+│   └── itinerary.py
+│
+├── prompts/
+│   ├── orchestrator.txt
+│   ├── planner.txt
+│   ├── sightseeing.txt
+│   ├── restaurant.txt
+│   ├── hotel.txt
+│   ├── transport.txt
+│   ├── fallback.txt
+│   └── synthesizer.txt
+│
+└── utils/
+    ├── __init__.py
+    └── helpers.py
