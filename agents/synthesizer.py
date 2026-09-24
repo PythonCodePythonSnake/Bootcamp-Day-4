@@ -23,18 +23,6 @@ class SynthesisResult(BaseModel):
     reasoning: str = ""
 
 
-def _fallback(travel_request: TravelRequest) -> dict:
-    """Deterministic fallback when synthesis fails."""
-    return {
-        "status": "synthesis_failed",
-        "destination": travel_request.destination,
-        "message": (
-            "The itinerary could not be generated from the available "
-            "travel data."
-        ),
-    }
-
-
 def run(state: TravelState) -> TravelState:
     travel_request = state.get("travel_request")
 
@@ -54,11 +42,9 @@ def run(state: TravelState) -> TravelState:
         llm = get_llm(temperature=0.2)
         structured_llm = llm.with_structured_output(SynthesisResult)
 
-        # All specialized agent outputs are stored centrally.
         agent_results = state.get("agent_results", {}) or {}
-
-        # Routes are stored separately because they have their own schema.
         routes = state.get("routes", []) or []
+        human_feedback = state.get("human_feedback")
 
         available_data = {
             "sightseeing": agent_results.get("sightseeing", []),
@@ -69,6 +55,13 @@ def run(state: TravelState) -> TravelState:
             "routes": routes,
         }
 
+        feedback_text = (
+            f"\n\nHuman feedback from the previous itinerary review:\n"
+            f"{human_feedback}"
+            if human_feedback
+            else ""
+        )
+
         result: SynthesisResult = structured_llm.invoke(
             [
                 {"role": "system", "content": _PROMPT},
@@ -78,15 +71,17 @@ def run(state: TravelState) -> TravelState:
                         f"Travel request:\n"
                         f"{travel_request.model_dump_json()}\n\n"
                         f"Available agent results:\n"
-                        f"{available_data}\n\n"
+                        f"{available_data}"
+                        f"{feedback_text}\n\n"
                         "Create a practical day-by-day itinerary using "
                         "only the available information. Respect the "
                         "requested dates, duration, preferences, budget, "
                         "and must-visit locations. Use route information "
-                        "when available. Do not invent live travel "
-                        "information, prices, opening hours, availability, "
-                        "or other facts that are not present in the "
-                        "provided data."
+                        "when available. If human feedback is provided, "
+                        "modify the itinerary accordingly.\n\n"
+                        "Do not invent live travel information, prices, "
+                        "opening hours, availability, or other facts that "
+                        "are not present in the provided data."
                     ),
                 },
             ]
@@ -95,11 +90,12 @@ def run(state: TravelState) -> TravelState:
         if result.itinerary is None:
             return {
                 "itinerary": None,
-                "errors": state.get("errors", []) + [
+                "errors": [
                     {
                         "node": "synthesizer",
                         "message": (
-                            result.reasoning or "No itinerary was produced."
+                            result.reasoning
+                            or "No itinerary was produced."
                         ),
                         "retry_count": 0,
                     }
@@ -111,15 +107,13 @@ def run(state: TravelState) -> TravelState:
         }
 
     except Exception as exc:
-        errors = state.get("errors", []) + [
-            {
-                "node": "synthesizer",
-                "message": str(exc),
-                "retry_count": 0,
-            }
-        ]
-
         return {
             "itinerary": None,
-            "errors": errors,
+            "errors": [
+                {
+                    "node": "synthesizer",
+                    "message": str(exc),
+                    "retry_count": 0,
+                }
+            ],
         }

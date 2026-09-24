@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import time
 from typing import Literal
 
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
-from langgraph.types import interrupt
+from langgraph.types import Send, interrupt
 
 from agents.fallback import run as fallback_run
 from agents.hotel import run as hotel_run
@@ -17,10 +18,15 @@ from agents.sightseeing import run as sightseeing_run
 from agents.synthesizer import run as synthesizer_run
 from agents.transport import run as transport_run
 from graph.state import TravelState
-from schemas.itinerary import Route
-from tools.routes import optimize_route
 
-VALID_AGENTS = {"sightseeing", "restaurant", "hotel", "transport", "fallback"}
+
+VALID_AGENTS = {
+    "sightseeing",
+    "restaurant",
+    "hotel",
+    "transport",
+    "fallback",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -28,17 +34,50 @@ VALID_AGENTS = {"sightseeing", "restaurant", "hotel", "transport", "fallback"}
 # ---------------------------------------------------------------------------
 
 def orchestrator_node(state: TravelState) -> TravelState:
-    return orchestrator_run(state)
+    start = time.perf_counter()
+
+    print("\n[ORCHESTRATOR] Starting...")
+
+    result = orchestrator_run(state)
+
+    elapsed = time.perf_counter() - start
+
+    if result.get("requires_human_input"):
+        print(
+            f"[ORCHESTRATOR] Missing required information "
+            f"({elapsed:.2f}s)"
+        )
+    else:
+        print(
+            f"[ORCHESTRATOR] Travel request extracted "
+            f"({elapsed:.2f}s)"
+        )
+
+    return result
 
 
 def human_clarification_node(state: TravelState) -> TravelState:
-    """Pause the graph and ask the human for missing essential information."""
-    missing = state.get("missing_info")
-    questions = missing.questions if missing else ["Could you provide more trip details?"]
+    """Pause the graph and ask the human for missing information."""
 
-    answer = interrupt({"type": "missing_info", "questions": questions})
+    missing = state.get("missing_info")
+
+    questions = (
+        missing.questions
+        if missing
+        else ["Could you provide more trip details?"]
+    )
+
+    print("\n[HUMAN INPUT] Additional information required.")
+
+    answer = interrupt(
+        {
+            "type": "missing_info",
+            "questions": questions,
+        }
+    )
 
     existing_input = state.get("user_input", "")
+
     return {
         "user_input": f"{existing_input}\n{answer}".strip(),
         "awaiting_human_input": False,
@@ -46,75 +85,162 @@ def human_clarification_node(state: TravelState) -> TravelState:
 
 
 def planner_node(state: TravelState) -> TravelState:
-    return planner_run(state)
+    start = time.perf_counter()
+
+    print("\n[PLANNER] Deciding which agents are required...")
+
+    result = planner_run(state)
+
+    elapsed = time.perf_counter() - start
+
+    agents = result.get("planned_agents", [])
+
+    print(
+        f"[PLANNER] Selected: "
+        f"{', '.join(agents)} "
+        f"({elapsed:.2f}s)"
+    )
+
+    if state.get("human_feedback"):
+        print(
+            f"[PLANNER] Using human feedback: "
+            f"{state['human_feedback']}"
+        )
+
+    return result
 
 
-def sightseeing_node(state: TravelState) -> TravelState:
-    return sightseeing_run(state)
+def specialist_node(state: TravelState) -> TravelState:
+    """Run one selected specialist agent.
 
+    Multiple instances of this node may execute in parallel through Send.
+    """
 
-def restaurant_node(state: TravelState) -> TravelState:
-    return restaurant_run(state)
+    agent = state.get("current_agent")
 
+    if not agent:
+        return {
+            "errors": [
+                {
+                    "node": "specialist",
+                    "message": "No current_agent was provided.",
+                    "retry_count": 0,
+                }
+            ]
+        }
 
-def hotel_node(state: TravelState) -> TravelState:
-    return hotel_run(state)
+    start = time.perf_counter()
 
+    print(f"\n[{agent.upper()}] Starting...")
 
-def transport_node(state: TravelState) -> TravelState:
-    return transport_run(state)
+    runners = {
+        "sightseeing": sightseeing_run,
+        "restaurant": restaurant_run,
+        "hotel": hotel_run,
+        "transport": transport_run,
+        "fallback": fallback_run,
+    }
 
+    runner = runners.get(agent)
 
-def fallback_node(state: TravelState) -> TravelState:
-    return fallback_run(state)
+    if runner is None:
+        return {
+            "errors": [
+                {
+                    "node": "specialist",
+                    "message": f"Unknown agent: {agent}",
+                    "retry_count": 0,
+                }
+            ]
+        }
+
+    result = runner(state)
+
+    elapsed = time.perf_counter() - start
+
+    agent_results = result.get("agent_results", {})
+    agent_output = agent_results.get(agent, [])
+
+    print(
+        f"[{agent.upper()}] Done "
+        f"({elapsed:.2f}s) - "
+        f"{len(agent_output)} results"
+    )
+
+    return result
 
 
 def maps_node(state: TravelState) -> TravelState:
-    """Compute an efficient visiting order/route from agent results using the routes tool."""
-    results = state.get("agent_results", {}) or {}
-    waypoints: list[str] = []
+    """Process routes after all selected specialist agents finish."""
 
-    for place in results.get("sightseeing", []) or []:
-        name = place.get("name")
-        if name:
-            waypoints.append(name)
-    for restaurant in results.get("restaurant", []) or []:
-        name = restaurant.get("name")
-        if name:
-            waypoints.append(name)
+    start = time.perf_counter()
 
-    if len(waypoints) < 2:
-        return {}
+    print("\n[MAPS] Processing routes...")
 
-    try:
-        raw_route = optimize_route(waypoints=waypoints)
-        route = Route(**raw_route)
-        routes = state.get("routes", []) + [route]
-        return {"routes": routes}
-    except Exception as exc:  # a tool failure should not crash the whole graph
-        errors = state.get("errors", []) + [
-            {"node": "maps", "message": str(exc), "retry_count": 0}
-        ]
-        return {"errors": errors}
+    # The current routes.py supports origin -> destination routing.
+    # Waypoint optimization is not implemented yet.
+    #
+    # Route integration can be added here once the itinerary places have
+    # been selected and their coordinates are available.
+
+    elapsed = time.perf_counter() - start
+
+    print(f"[MAPS] Done ({elapsed:.2f}s)")
+
+    return {}
 
 
 def synthesizer_node(state: TravelState) -> TravelState:
-    return synthesizer_run(state)
+    start = time.perf_counter()
+
+    print("\n[SYNTHESIZER] Building itinerary...")
+
+    result = synthesizer_run(state)
+
+    elapsed = time.perf_counter() - start
+
+    if result.get("itinerary") is not None:
+        print(
+            f"[SYNTHESIZER] Itinerary generated "
+            f"({elapsed:.2f}s)"
+        )
+    else:
+        print(
+            f"[SYNTHESIZER] Failed to generate itinerary "
+            f"({elapsed:.2f}s)"
+        )
+
+    return result
 
 
 def human_review_node(state: TravelState) -> TravelState:
-    """Pause the graph for the human to approve the itinerary or request changes."""
+    """Pause the graph for human approval or requested changes."""
+
     itinerary = state.get("itinerary")
+
+    print("\n[HUMAN REVIEW] Waiting for approval...")
 
     decision = interrupt(
         {
             "type": "review",
-            "itinerary": itinerary.model_dump() if itinerary else None,
+            "itinerary": (
+                itinerary.model_dump()
+                if itinerary
+                else None
+            ),
         }
     )
-    # Expected shape: {"approved": bool, "feedback": Optional[str]}
+
     approved = bool(decision.get("approved", False))
     feedback = decision.get("feedback")
+
+    if approved:
+        print("[HUMAN REVIEW] Itinerary approved.")
+    else:
+        print(
+            "[HUMAN REVIEW] Itinerary rejected. "
+            "Returning to planner."
+        )
 
     return {
         "approved": approved,
@@ -127,22 +253,56 @@ def human_review_node(state: TravelState) -> TravelState:
 # Conditional routing
 # ---------------------------------------------------------------------------
 
-def route_after_orchestrator(state: TravelState) -> Literal["human_clarification", "planner"]:
+def route_after_orchestrator(
+    state: TravelState,
+) -> Literal["human_clarification", "planner"]:
+
     if state.get("requires_human_input"):
         return "human_clarification"
+
     return "planner"
 
 
-def route_planned_agents(state: TravelState) -> list[str]:
-    """Fan out only to the agents the planner decided are actually needed."""
+def route_planned_agents(
+    state: TravelState,
+) -> list[Send]:
+    """Fan out selected specialist agents in parallel."""
+
     planned = state.get("planned_agents", []) or []
-    targets = [agent for agent in planned if agent in VALID_AGENTS]
-    return targets or ["fallback"]
+
+    targets = [
+        agent
+        for agent in planned
+        if agent in VALID_AGENTS
+    ]
+
+    if not targets:
+        targets = ["fallback"]
+
+    print(
+        "\n[PLANNER] Launching agents in parallel: "
+        + ", ".join(targets)
+    )
+
+    return [
+        Send(
+            "specialist",
+            {
+                **state,
+                "current_agent": agent,
+            },
+        )
+        for agent in targets
+    ]
 
 
-def route_after_review(state: TravelState) -> Literal["end", "planner"]:
+def route_after_review(
+    state: TravelState,
+) -> Literal["end", "planner"]:
+
     if state.get("approved"):
         return "end"
+
     return "planner"
 
 
@@ -151,49 +311,117 @@ def route_after_review(state: TravelState) -> Literal["end", "planner"]:
 # ---------------------------------------------------------------------------
 
 def build_workflow():
-    """Build and compile the LangGraph workflow with an in-memory checkpointer
-    (required for interrupt-based human-in-the-loop)."""
+    """Build and compile the LangGraph workflow."""
+
     graph = StateGraph(TravelState)
 
-    graph.add_node("orchestrator", orchestrator_node)
-    graph.add_node("human_clarification", human_clarification_node)
-    graph.add_node("planner", planner_node)
-    graph.add_node("sightseeing", sightseeing_node)
-    graph.add_node("restaurant", restaurant_node)
-    graph.add_node("hotel", hotel_node)
-    graph.add_node("transport", transport_node)
-    graph.add_node("fallback", fallback_node)
-    graph.add_node("maps", maps_node)
-    graph.add_node("synthesizer", synthesizer_node)
-    graph.add_node("human_review", human_review_node)
+    graph.add_node(
+        "orchestrator",
+        orchestrator_node,
+    )
+
+    graph.add_node(
+        "human_clarification",
+        human_clarification_node,
+    )
+
+    graph.add_node(
+        "planner",
+        planner_node,
+    )
+
+    graph.add_node(
+        "specialist",
+        specialist_node,
+    )
+
+    graph.add_node(
+        "maps",
+        maps_node,
+    )
+
+    graph.add_node(
+        "synthesizer",
+        synthesizer_node,
+    )
+
+    graph.add_node(
+        "human_review",
+        human_review_node,
+    )
 
     graph.set_entry_point("orchestrator")
+
+    # --------------------------------------------------
+    # Orchestrator
+    # --------------------------------------------------
 
     graph.add_conditional_edges(
         "orchestrator",
         route_after_orchestrator,
-        {"human_clarification": "human_clarification", "planner": "planner"},
+        {
+            "human_clarification": "human_clarification",
+            "planner": "planner",
+        },
     )
-    graph.add_edge("human_clarification", "orchestrator")
+
+    # --------------------------------------------------
+    # Human clarification -> orchestrator
+    # --------------------------------------------------
+
+    graph.add_edge(
+        "human_clarification",
+        "orchestrator",
+    )
+
+    # --------------------------------------------------
+    # Planner -> parallel specialists
+    # --------------------------------------------------
 
     graph.add_conditional_edges(
         "planner",
         route_planned_agents,
-        {agent: agent for agent in VALID_AGENTS},
+        ["specialist"],
     )
 
-    # All specialized agents fan back in to maps before synthesis.
-    for agent in VALID_AGENTS:
-        graph.add_edge(agent, "maps")
+    # --------------------------------------------------
+    # Parallel specialists -> maps
+    # --------------------------------------------------
 
-    graph.add_edge("maps", "synthesizer")
-    graph.add_edge("synthesizer", "human_review")
+    graph.add_edge(
+        "specialist",
+        "maps",
+    )
+
+    # --------------------------------------------------
+    # Maps -> synthesizer -> human review
+    # --------------------------------------------------
+
+    graph.add_edge(
+        "maps",
+        "synthesizer",
+    )
+
+    graph.add_edge(
+        "synthesizer",
+        "human_review",
+    )
+
+    # --------------------------------------------------
+    # Human review -> end or regeneration
+    # --------------------------------------------------
 
     graph.add_conditional_edges(
         "human_review",
         route_after_review,
-        {"end": END, "planner": "planner"},
+        {
+            "end": END,
+            "planner": "planner",
+        },
     )
 
     checkpointer = MemorySaver()
-    return graph.compile(checkpointer=checkpointer)
+
+    return graph.compile(
+        checkpointer=checkpointer,
+    )

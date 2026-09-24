@@ -2,3 +2,5 @@ pydantic
 langchain_google_genai
 python-dotenv
 langgraph
+requests
+tavily-python

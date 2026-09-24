@@ -90,7 +90,7 @@ def run(state: TravelState) -> TravelState:
         flight_data = search_flights(
             origin=travel_request.origin,
             destination=travel_request.destination,
-            travel_date=start_date,
+            departure_date=start_date,
         )
 
         llm = get_llm(temperature=0)

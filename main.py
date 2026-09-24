@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from langgraph.types import Command
 import uuid
+
+from langgraph.types import Command
 
 from graph.workflow import build_workflow
 
@@ -70,10 +71,80 @@ def print_itinerary(itinerary):
             print(f"- {note}")
 
 
+def handle_interrupt(workflow, result, config):
+    """Handle one LangGraph interrupt and return the resumed result."""
+
+    interrupt_data = result["__interrupt__"][0].value
+    interrupt_type = interrupt_data.get("type")
+
+    if interrupt_type == "missing_info":
+        questions = interrupt_data.get("questions", [])
+
+        print("\nAdditional information is required:")
+
+        for question in questions:
+            print(f"- {question}")
+
+        answer = input("\nYour answer:\n> ").strip()
+
+        if not answer:
+            print("No answer provided.")
+            return None
+
+        return workflow.invoke(
+            Command(resume=answer),
+            config=config,
+        )
+
+    if interrupt_type == "review":
+        itinerary_data = interrupt_data.get("itinerary")
+
+        if itinerary_data:
+            from schemas.itinerary import Itinerary
+
+            itinerary = Itinerary(**itinerary_data)
+            print_itinerary(itinerary)
+
+        print("\n" + "=" * 60)
+
+        decision = input(
+            "Approve itinerary? [y/n]\n> "
+        ).strip().lower()
+
+        if decision in {"y", "yes"}:
+            return workflow.invoke(
+                Command(
+                    resume={
+                        "approved": True,
+                        "feedback": None,
+                    }
+                ),
+                config=config,
+            )
+
+        feedback = input(
+            "\nWhat would you like to change?\n> "
+        ).strip()
+
+        return workflow.invoke(
+            Command(
+                resume={
+                    "approved": False,
+                    "feedback": feedback,
+                }
+            ),
+            config=config,
+        )
+
+    print("Unknown human interaction requested.")
+    return None
+
+
 def main():
     workflow = build_workflow()
 
     thread_id = str(uuid.uuid4())
+
     config = {
         "configurable": {
             "thread_id": thread_id,
@@ -83,7 +154,9 @@ def main():
     print("Travel Itinerary Agent")
     print("=" * 60)
 
-    user_input = input("\nWhat kind of trip would you like to plan?\n> ").strip()
+    user_input = input(
+        "\nWhat kind of trip would you like to plan?\n> "
+    ).strip()
 
     if not user_input:
         print("No travel request provided.")
@@ -95,99 +168,35 @@ def main():
         "errors": [],
     }
 
-    while True:
-        result = workflow.invoke(state, config=config)
+    result = workflow.invoke(
+        state,
+        config=config,
+    )
 
-        # LangGraph has paused at a human clarification/review interrupt.
-        if "__interrupt__" in result:
-            interrupt_data = result["__interrupt__"][0].value
+    while "__interrupt__" in result:
+        result = handle_interrupt(
+            workflow,
+            result,
+            config,
+        )
 
-            interrupt_type = interrupt_data.get("type")
-
-            if interrupt_type == "missing_info":
-                questions = interrupt_data.get("questions", [])
-
-                print("\nAdditional information is required:")
-
-                for question in questions:
-                    print(f"- {question}")
-
-                answer = input("\nYour answer:\n> ").strip()
-
-                if not answer:
-                    print("No answer provided.")
-                    return
-
-                workflow.invoke(
-                    Command(resume=answer),
-                    config=config,
-                )
-
-            elif interrupt_type == "review":
-                itinerary_data = interrupt_data.get("itinerary")
-
-                if itinerary_data:
-                    from schemas.itinerary import Itinerary
-
-                    itinerary = Itinerary(**itinerary_data)
-                    print_itinerary(itinerary)
-
-                print("\n" + "=" * 60)
-                decision = input(
-                    "Approve itinerary? [y/n]\n> "
-                ).strip().lower()
-
-                if decision in {"y", "yes"}:
-                    workflow.invoke(
-                        Command(
-                            resume={
-                                "approved": True,
-                                "feedback": None,
-                            }
-                        ),
-                        config=config,
-                    )
-                    print("\nItinerary approved.")
-                    return
-
-                feedback = input(
-                    "\nWhat would you like to change?\n> "
-                ).strip()
-
-                workflow.invoke(
-                    Command(
-                        resume={
-                            "approved": False,
-                            "feedback": feedback,
-                        }
-                    ),
-                    config=config,
-                )
-
-            else:
-                print("Unknown human interaction requested.")
-                return
-
-            # Continue from the resumed workflow state.
-            state = {}
-
-        else:
-            final_state = result
-
-            if final_state.get("itinerary") is not None:
-                print_itinerary(final_state["itinerary"])
-
-            if final_state.get("errors"):
-                print("\nWarnings/errors:")
-                for error in final_state["errors"]:
-                    print(
-                        f"- {error.get('node', 'unknown')}: "
-                        f"{error.get('message', 'Unknown error')}"
-                    )
-
+        if result is None:
             return
+
+    final_state = result
+
+    if final_state.get("itinerary") is not None:
+        print_itinerary(final_state["itinerary"])
+
+    if final_state.get("errors"):
+        print("\nWarnings/errors:")
+
+        for error in final_state["errors"]:
+            print(
+                f"- {error.get('node', 'unknown')}: "
+                f"{error.get('message', 'Unknown error')}"
+            )
 
 
 if __name__ == "__main__":
-
     main()

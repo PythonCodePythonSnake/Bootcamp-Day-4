@@ -14,7 +14,7 @@ load_dotenv()
 @dataclass
 class Settings:
     gemini_api_key: str = field(default_factory=lambda: os.getenv("GEMINI_API_KEY", ""))
-    gemini_model: str = field(default_factory=lambda: os.getenv("GEMINI_MODEL", "gemma-4-31b-it"))
+    gemini_model: str = field(default_factory=lambda: os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite"))
     # "gemma-4-26b-a4b-it", gemini-2.5-flash-lite
 
     langsmith_api_key: str = field(default_factory=lambda: os.getenv("LANGSMITH_API_KEY", ""))

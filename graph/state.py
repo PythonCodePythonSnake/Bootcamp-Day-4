@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
-from typing import Any, Optional, TypedDict
+from typing import Annotated, Any, Optional, TypedDict
+
 
 from schemas.itinerary import Itinerary, Route
 from schemas.travel import MissingInfo, TravelRequest
 
 
 class AgentResults(TypedDict, total=False):
-    """Raw structured outputs collected from each specialized agent, keyed by agent name."""
+    """Structured outputs collected from each specialized agent."""
 
     sightseeing: list[dict[str, Any]]
     restaurant: list[dict[str, Any]]
@@ -24,6 +25,27 @@ class ErrorInfo(TypedDict, total=False):
     retry_count: int
 
 
+def merge_agent_results(
+    current: AgentResults | None,
+    update: AgentResults | None,
+) -> AgentResults:
+    """Merge parallel agent results without overwriting other agents."""
+
+    merged = dict(current or {})
+    merged.update(update or {})
+
+    return merged
+
+
+def merge_errors(
+    current: list[ErrorInfo] | None,
+    update: list[ErrorInfo] | None,
+) -> list[ErrorInfo]:
+    """Merge errors produced by parallel agents."""
+
+    return (current or []) + (update or [])
+
+
 class TravelState(TypedDict, total=False):
     # --- raw input ---
     user_input: str
@@ -34,11 +56,17 @@ class TravelState(TypedDict, total=False):
     requires_human_input: bool
 
     # --- planner output ---
-    planned_agents: list[str]  # e.g. ["sightseeing", "restaurant", "hotel", "maps"]
+    planned_agents: list[str]
     planner_reasoning: Optional[str]
 
+    # --- parallel specialist worker ---
+    current_agent: str
+
     # --- agent results ---
-    agent_results: AgentResults
+    agent_results: Annotated[
+        AgentResults,
+        merge_agent_results,
+    ]
 
     # --- maps/routes ---
     routes: list[Route]
@@ -52,5 +80,9 @@ class TravelState(TypedDict, total=False):
     awaiting_human_input: bool
 
     # --- control/meta ---
-    errors: list[ErrorInfo]
+    errors: Annotated[
+        list[ErrorInfo],
+        merge_errors,
+    ]
+
     iteration_count: int

@@ -1,9 +1,9 @@
 from tools.places import get_hotels
 
 
-def search_hotels(lat, lon, radius=5000):
+def search_hotels(latitude, longitude, radius=5000):
     return get_hotels(
-        lat=lat,
-        lon=lon,
+        latitude=latitude,
+        longitude=longitude,
         radius=radius,
     )

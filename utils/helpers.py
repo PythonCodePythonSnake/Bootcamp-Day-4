@@ -7,7 +7,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable, TypeVar
 
-PROMPTS_DIR = Path(__file__).resolve().parent / "prompts"
+PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
 
 T = TypeVar("T")
 
