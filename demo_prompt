@@ -1,1 +1,141 @@
 Plan a 5-day trip to Tokyo for 2 people. Budget: $2500 total. Interests: Anime, Japanese food, Technology, Sightseeing. Include: Hotel recommendations, Restaurants, Daily itinerary, Travel times between locations
+
+Demo Output-
+Travel Itinerary Agent
+============================================================
+
+What kind of trip would you like to plan?
+> Plan a 5-day trip to Tokyo for 2 people. Budget: $2500 total. Interests: Anime, Japanese food, Technology, Sightseeing. Include: Hotel recommendations, Restaurants, Daily itinerary, Travel times between locations
+
+[ORCHESTRATOR] Starting...
+Direct use of automatic function calling (AFC) in Models.generate_content is not recommended. Instead, we recommend to use AFC in Chat.send_message. Similarly, direct use ofAFC in Models.generate_content_stream is not recommended. Instead, we recommend to use AFC in Chat.send_message_stream.
+[ORCHESTRATOR] Travel request extracted (8.21s)
+
+[PLANNER] Deciding which agents are required...
+[PLANNER] Selected: hotel, restaurant, sightseeing, transport (2.88s)
+
+[PLANNER] Launching agents in parallel: hotel, restaurant, sightseeing, transport
+
+[HOTEL] Starting...
+
+[RESTAURANT] Starting...
+
+[SIGHTSEEING] Starting...
+[TRANSPORT] Starting...
+
+[TRANSPORT] Done (0.00s) - 1 results
+[RESTAURANT] Done (15.14s) - 1 results
+[SIGHTSEEING] Done (15.14s) - 1 results
+[HOTEL] Done (15.14s) - 1 results
+
+[MAPS] Processing routes...
+[MAPS] Done (0.00s)
+
+[SYNTHESIZER] Building itinerary...
+[SYNTHESIZER] Itinerary generated (7.00s)
+
+[HUMAN REVIEW] Waiting for approval...
+
+============================================================
+TRAVEL ITINERARY
+============================================================
+
+Destination: Tokyo
+Currency: USD
+Estimated total cost: 2500.0 USD
+
+--- Day 1 ---
+Begin your Tokyo adventure with a day dedicated to sightseeing. Explore the city's diverse attractions, keeping in mind your interests in anime, Japanese food, technology, and general sightseeing.
+
+None - Sightseeing
+Place: Sightseeing search required
+
+--- Day 2 ---
+Continue your exploration of Tokyo. Today could focus on areas related to anime and technology, or delve deeper into historical and cultural sights.
+
+None - Sightseeing
+Place: Sightseeing search required
+
+--- Day 3 ---
+Dedicate today to experiencing Tokyo's renowned culinary scene. Explore different neighborhoods to find authentic Japanese food experiences.
+
+None - Sightseeing
+Place: Sightseeing search required
+
+--- Day 4 ---
+Explore more of Tokyo's offerings. This could be a day to revisit favorite spots or discover new ones based on your interests in technology, anime, or sightseeing.
+
+None - Sightseeing
+Place: Sightseeing search required
+
+--- Day 5 ---
+On your final day in Tokyo, you can choose to do some last-minute souvenir shopping, revisit a place you particularly enjoyed, or explore a new neighborhood before your departure.
+
+None - Sightseeing
+Place: Sightseeing search required
+
+Notes:
+- Accommodation, specific restaurant recommendations, and detailed transportation options require further information.
+- The itinerary is a suggestion and can be customized based on specific interests and available information.
+- All sightseeing, restaurant, and hotel details need to be verified and booked separately.
+
+============================================================
+Approve itinerary? [y/n]
+> y
+Deserializing unregistered type schemas.travel.TransportPreference from checkpoint. This will be blocked in a future version. Set LANGGRAPH_STRICT_MSGPACK=true to block now,or add to allowed_msgpack_modules to allow explicitly: [('schemas.travel', 'TransportPreference')]
+Deserializing unregistered type schemas.travel.AccommodationPreference from checkpoint. This will be blocked in a future version. Set LANGGRAPH_STRICT_MSGPACK=true to block now, or add to allowed_msgpack_modules to allow explicitly: [('schemas.travel', 'AccommodationPreference')]
+Deserializing unregistered type schemas.travel.TripIntent from checkpoint. This will be blocked in a future version. Set LANGGRAPH_STRICT_MSGPACK=true to block now, or add to allowed_msgpack_modules to allow explicitly: [('schemas.travel', 'TripIntent')]
+Deserializing unregistered type schemas.travel.TravelRequest from checkpoint. This will be blocked in a future version. Set LANGGRAPH_STRICT_MSGPACK=true to block now, or add to allowed_msgpack_modules to allow explicitly: [('schemas.travel', 'TravelRequest')]
+Deserializing unregistered type schemas.travel.MissingInfo from checkpoint. This will be blocked in a future version. Set LANGGRAPH_STRICT_MSGPACK=true to block now, or add to allowed_msgpack_modules to allow explicitly: [('schemas.travel', 'MissingInfo')]
+Deserializing unregistered type schemas.itinerary.Itinerary from checkpoint. This will be blocked in a future version. Set LANGGRAPH_STRICT_MSGPACK=true to block now, or addto allowed_msgpack_modules to allow explicitly: [('schemas.itinerary', 'Itinerary')]
+
+[HUMAN REVIEW] Waiting for approval...
+[HUMAN REVIEW] Itinerary approved.
+
+============================================================
+TRAVEL ITINERARY
+============================================================
+
+Destination: Tokyo
+Currency: USD
+Estimated total cost: 2500.0 USD
+
+--- Day 1 ---
+Begin your Tokyo adventure with a day dedicated to sightseeing. Explore the city's diverse attractions, keeping in mind your interests in anime, Japanese food, technology, and general sightseeing.
+
+None - Sightseeing
+Place: Sightseeing search required
+
+--- Day 2 ---
+Continue your exploration of Tokyo. Today could focus on areas related to anime and technology, or delve deeper into historical and cultural sights.
+
+None - Sightseeing
+Place: Sightseeing search required
+
+--- Day 3 ---
+Dedicate today to experiencing Tokyo's renowned culinary scene. Explore different neighborhoods to find authentic Japanese food experiences.
+
+None - Sightseeing
+Place: Sightseeing search required
+
+--- Day 4 ---
+Explore more of Tokyo's offerings. This could be a day to revisit favorite spots or discover new ones based on your interests in technology, anime, or sightseeing.
+
+None - Sightseeing
+Place: Sightseeing search required
+
+--- Day 5 ---
+On your final day in Tokyo, you can choose to do some last-minute souvenir shopping, revisit a place you particularly enjoyed, or explore a new neighborhood before your departure.
+
+None - Sightseeing
+Place: Sightseeing search required
+
+Notes:
+- Accommodation, specific restaurant recommendations, and detailed transportation options require further information.
+- The itinerary is a suggestion and can be customized based on specific interests and available information.
+- All sightseeing, restaurant, and hotel details need to be verified and booked separately.
+
+Warnings/errors:
+- hotel: 504 Server Error: Gateway Timeout for url: https://overpass-api.de/api/interpreter
+- restaurant: 504 Server Error: Gateway Timeout for url: https://overpass-api.de/api/interpreter
+- sightseeing: 504 Server Error: Gateway Timeout for url: https://overpass-api.de/api/interpreter

@@ -41,7 +41,8 @@ def print_itinerary(itinerary):
             print(day.summary)
 
         for block in day.blocks:
-            print(f"\n{block.time_slot} - {block.activity_type}")
+            slot_str = block.time_slot or "Scheduled"
+            print(f"\n{slot_str} - {block.activity_type}")
 
             if block.place:
                 print(f"Place: {block.place.name}")
@@ -185,9 +186,7 @@ def main():
 
     final_state = result
 
-    if final_state.get("itinerary") is not None:
-        print_itinerary(final_state["itinerary"])
-
+    # Only print errors/warnings at the end; itinerary was already printed on review
     if final_state.get("errors"):
         print("\nWarnings/errors:")
 

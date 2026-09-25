@@ -7,6 +7,7 @@ accommodation preferences and budget.
 
 from __future__ import annotations
 
+import traceback
 from pydantic import BaseModel, Field
 
 from config import get_llm
@@ -22,13 +23,32 @@ class HotelSelection(BaseModel):
     reasoning: str = ""
 
 
-def _fallback(travel_request: TravelRequest) -> list[dict]:
-    """Deterministic fallback when the hotel search fails."""
+def _fallback_web_search(travel_request: TravelRequest) -> list[dict]:
+    """Fallback to web search for hotels if Overpass API fails."""
+    try:
+        from tools.web_search import search
+        query = f"best hotels places to stay in {travel_request.destination} budget {travel_request.budget.amount or ''}"
+        print(f"  [HOTEL] Attempting web search fallback: '{query}'...")
+        web_res = search(query, max_results=5)
+        if web_res:
+            print(f"  [HOTEL] Web search fallback returned {len(web_res)} items.")
+            return [
+                {
+                    "name": item.get("title", f"Hotel in {travel_request.destination}"),
+                    "description": item.get("content", ""),
+                    "location": travel_request.destination,
+                    "url": item.get("url", ""),
+                }
+                for item in web_res
+            ]
+    except Exception as exc:
+        print(f"  [HOTEL] Web search fallback failed: {exc}")
+
     return [
         {
-            "name": "Hotel search required",
+            "name": f"Recommended Accommodation in {travel_request.destination}",
             "location": travel_request.destination,
-            "reason": "No live hotel results were available from the hotel tool.",
+            "reason": "Live API lookup was unavailable.",
         }
     ]
 
@@ -37,11 +57,9 @@ def run(state: TravelState) -> TravelState:
     travel_request = state.get("travel_request")
 
     if travel_request is None:
+        print("  [HOTEL ERROR] No travel_request in state.")
         return {
-            "agent_results": {
-                **(state.get("agent_results", {}) or {}),
-                "hotel": [],
-            },
+            "agent_results": {"hotel": []},
             "errors": [
                 {
                     "node": "hotel",
@@ -55,8 +73,9 @@ def run(state: TravelState) -> TravelState:
         from tools.maps import geocode
         from tools.hotels import search_hotels
 
-        # Resolve destination into coordinates.
+        print(f"  [HOTEL] Geocoding destination: '{travel_request.destination}'...")
         location = geocode(travel_request.destination)
+        print(f"  [HOTEL] Geocode result: {location}")
 
         if not location:
             raise ValueError(
@@ -66,13 +85,18 @@ def run(state: TravelState) -> TravelState:
         latitude = location["lat"]
         longitude = location["lon"]
 
-        # Assumed tool interface based on tools/hotels.py:
-        # search_hotels(latitude, longitude) -> list[dict]
+        print(f"  [HOTEL] Querying hotels at ({latitude:.4f}, {longitude:.4f})...")
         hotel_data = search_hotels(
             latitude=latitude,
             longitude=longitude,
         )
+        print(f"  [HOTEL] Total hotels returned: {len(hotel_data or [])}")
 
+        if not hotel_data:
+            print("  [HOTEL] No raw hotels found, switching to web search fallback...")
+            hotel_data = _fallback_web_search(travel_request)
+
+        print("  [HOTEL] Invoking LLM to select and rank hotels...")
         llm = get_llm(temperature=0)
         structured_llm = llm.with_structured_output(HotelSelection)
 
@@ -96,18 +120,20 @@ def run(state: TravelState) -> TravelState:
         )
 
         hotels = selection.hotels
+        print(f"  [HOTEL] LLM selected {len(hotels)} hotels.")
 
         if not hotels:
-            hotels = hotel_data if hotel_data else _fallback(travel_request)
+            hotels = hotel_data or _fallback_web_search(travel_request)
 
         return {
             "agent_results": {
-                **(state.get("agent_results", {}) or {}),
                 "hotel": hotels,
             }
         }
 
     except Exception as exc:
+        print(f"  [HOTEL ERROR] Failed with exception: {exc}")
+        traceback.print_exc()
         errors = state.get("errors", []) + [
             {
                 "node": "hotel",
@@ -116,10 +142,10 @@ def run(state: TravelState) -> TravelState:
             }
         ]
 
+        fallback_hotels = _fallback_web_search(travel_request)
         return {
             "agent_results": {
-                **(state.get("agent_results", {}) or {}),
-                "hotel": _fallback(travel_request),
+                "hotel": fallback_hotels,
             },
             "errors": errors,
         }

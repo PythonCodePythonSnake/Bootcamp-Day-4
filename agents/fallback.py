@@ -37,10 +37,7 @@ def run(state: TravelState) -> TravelState:
 
     if travel_request is None:
         return {
-            "agent_results": {
-                **(state.get("agent_results", {}) or {}),
-                "fallback": _fallback(),
-            },
+            "agent_results": {"fallback": _fallback()},
             "errors": [
                 {
                     "node": "fallback",
@@ -92,7 +89,6 @@ def run(state: TravelState) -> TravelState:
 
         return {
             "agent_results": {
-                **(state.get("agent_results", {}) or {}),
                 "fallback": results,
             }
         }
